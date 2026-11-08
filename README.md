@@ -51,3 +51,34 @@ The project focuses on exploring and applying modern data engineering principles
 ├── reports/
 │
 └── README.md
+```
+
+## Technologies
+
+Technologies and frameworks will be selected based on the project’s requirements.
+
+## Collaboration & Contribution
+
+All team members are encouraged to:
+
+* Contribute regularly to the repository.
+* Use meaningful commit messages.
+* Maintain proper documentation.
+* Review and discuss code changes.
+* Communicate progress with the team.
+* Follow the agreed Git workflow.
+
+## Version Control
+
+Git and GitHub are used for collaborative development, version control, tracking contributions, and maintaining project history.
+
+## Academic Information
+
+* Module: 7COM2005 – Data Engineering
+* Institution: University of Hertfordshire
+* Project Type: Group Coursework
+* Team Size: 6 Members
+
+
+Developed collaboratively as part of the University of Hertfordshire’s Data Engineering module.
+**Note:** This is your initial README. Once your team finalises the project topic, we'll customise the objectives, technologies and architecture accordingly.
