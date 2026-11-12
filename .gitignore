@@ -218,3 +218,15 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Security: Exclude environment variables, credentials, and secrets
+.env
+.env.*
+*.env
+*.pem
+*.key
+*.token
+credentials.json
+client_secret*.json
+*.sqlite-journal
+
