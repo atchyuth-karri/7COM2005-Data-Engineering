@@ -34,17 +34,28 @@ The project focuses on exploring and applying modern data engineering principles
 ```text
 7COM2005-Data-Engineering/
 │
-├── data/
-│   ├── raw/
-│   └── processed/
+├── PerfectPetClub/
+│   ├── data/
+│   │   ├── raw/
+│   │   │   ├── PerfectPetClub.db
+│   │   │   ├── PerfectPetClub_CRM_report.csv
+│   │   │   ├── PerfectPetClub_server_log.csv
+│   │   │   └── PerfectPetClub_survey.csv
+│   │   │
+│   │   └── processed/
+│   │
+│   ├── notebooks/
+│   │   ├── 01_ETL_Pipeline.ipynb
+│   │   └── 02_Machine_Learning.ipynb
+│   │
+│   ├── documentation/
+│   │
+│   ├── requirements.txt
+│   └── README.md
 │
 ├── research/
 │   ├── literature-review/
 │   └── references/
-│
-├── src/
-│
-├── documentation/
 │
 ├── presentation/
 │
