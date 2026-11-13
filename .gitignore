@@ -222,6 +222,7 @@ __marimo__/
 # Security: Exclude environment variables, credentials, and secrets
 .env
 .env.*
+!.env.example
 *.env
 *.pem
 *.key
