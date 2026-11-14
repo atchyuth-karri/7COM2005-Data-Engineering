@@ -1,5 +1,6 @@
 # Core Data Processing
-pandas>=2.2.0
+# pandas is capped below 3: PySpark 4.x does not yet fully support pandas 3.
+pandas>=2.2.0,<3
 numpy>=1.26.0
 pyarrow>=15.0.0
 
@@ -7,6 +8,8 @@ pyarrow>=15.0.0
 duckdb>=1.0.0
 
 # Machine Learning & Modeling
+# PySpark needs Java 17 or 21 installed. Tested with pyspark 4.3.0 on Python 3.12.
+pyspark>=4.0.0,<5
 scikit-learn>=1.4.0
 
 # Visualization
