@@ -1,6 +1,6 @@
-# Fixed-Cutoff Feature Design (PROPOSAL, not implemented)
+# Fixed-Cutoff Feature Design (implemented in notebooks 03 and 04)
 
-**Status:** proposal only. The ETL (`notebooks/01_ETL_Pipeline.ipynb`) and the canonical Parquet are unchanged. Nothing here has been run.
+**Status:** implemented in `notebooks/03_Fixed_Cutoff_Features.ipynb` (features) and `notebooks/04_Cutoff_Machine_Learning.ipynb` (models). The ETL notebook and canonical Parquet are unchanged: the cutoff features reuse the ETL functions on filtered copies of the raw inputs, and a reuse check confirms those functions reproduce the canonical dataset exactly. Results: CV AUC 0.48 to 0.60, close to chance.
 **Problem addressed:** prediction-time leakage in the current features (see the warning at the top of `notebooks/02_Machine_Learning.ipynb`).
 
 ## 1. The problem, verified
@@ -72,9 +72,11 @@ For each customer, with cutoff `T`:
 - **Time-based check:** train on customers whose `start_date` is earlier, test on later ones.
 - **Labels:** verify `auto_renew` against actual cancellation records if they exist. `auto_renew = 0` is a proxy.
 
-## 8. Decisions needed before implementation
+## 8. Decisions (updated)
 
-1. Approve option B with N = 14 (or 21).
+The ETL change in section 6 was not needed: the features were built by reusing the unchanged ETL functions on filtered inputs. The remaining open items are:
+
+1. Option B with N = 14 was used. A 21-day sensitivity run is not done.
 2. Confirm whether review dates exist in the source system. If not, exclude review features.
 3. Confirm how the survey was timed, or accept that survey features are a sensitivity only.
-4. Approve an ETL change. The current ETL notebook and Parquet will stay as they are, and the new file will sit alongside them.
+4. No ETL change was made. The cutoff Parquet (`customer_churn_dataset_cutoff14.parquet`) sits alongside the canonical file.

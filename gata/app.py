@@ -1,433 +1,283 @@
+"""
+PerfectPetClub churn dashboard (corrected).
 
-import streamlit as st
-import pandas as pd
-import numpy as np
-import joblib
-import pickle
+What changed from the original team app:
+- No manual uploads. The app reads the canonical project files directly.
+- The model is the saved PySpark pipeline from notebook 04 (fixed-cutoff features),
+  not the scikit-learn pickle trained on the mock CSV.
+- Metrics are computed on the held-out test customers only, not the whole dataset.
+- Churn (auto_renew = 0) is the positive class for precision, recall, F1 and ROC.
+- Confusion-matrix labels match the encoding: 0 = renewed, 1 = churned.
+- A leakage warning is shown, because the original full-window features leak outcome information.
+
+Run from the repository root:
+    streamlit run gata/app.py
+Requires Java 17 or 21 (for PySpark) and the packages in gata/requirements.txt.
+"""
+
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import seaborn as sns
-
+import streamlit as st
 from sklearn.metrics import (
     accuracy_score,
+    classification_report,
+    confusion_matrix,
+    f1_score,
     precision_score,
     recall_score,
-    f1_score,
     roc_auc_score,
-    confusion_matrix,
-    classification_report,
-    roc_curve
+    roc_curve,
 )
 
-# ---------------------------------------
-# 1. PAGE CONFIGURATION
-# ---------------------------------------
+APP_DIR = Path(__file__).resolve().parent
+PROJECT = APP_DIR.parent / "PerfectPetClub"
+CUTOFF_PARQUET = PROJECT / "data/processed/customer_churn_dataset_cutoff14.parquet"
+CANONICAL_PARQUET = PROJECT / "data/processed/customer_churn_dataset.parquet"
+OUTPUT_CUTOFF = PROJECT / "outputs/ml_cutoff14"
+OUTPUT_CANON = PROJECT / "outputs/ml"
+SELECTED = OUTPUT_CUTOFF / "selected_model.csv"
+PREDICTIONS = OUTPUT_CUTOFF / "test_predictions_selected_model.csv"
 
-st.set_page_config(
-    page_title="Customer Churn Model Evaluation",
-    page_icon="📊",
-    layout="wide"
-)
+CHURN, RENEWED = 1, 0
+LABEL_NAMES = {RENEWED: "Renewed (0)", CHURN: "Churned (1)"}
+
+st.set_page_config(page_title="PerfectPetClub Churn Dashboard", page_icon="📊", layout="wide")
+
+
+# ---------------------------------------------------------------------------
+# Cached resources
+# ---------------------------------------------------------------------------
+
+@st.cache_resource(show_spinner="Starting Spark...")
+def get_spark():
+    import os
+    import sys
+
+    from pyspark.sql import SparkSession
+
+    os.environ.setdefault("PYSPARK_PYTHON", sys.executable)
+    os.environ.setdefault("PYSPARK_DRIVER_PYTHON", sys.executable)
+    spark = (SparkSession.builder.master("local[*]").appName("PerfectPetClub-Dashboard")
+             .config("spark.driver.memory", "2g")
+             .config("spark.sql.shuffle.partitions", "4")
+             .getOrCreate())
+    spark.sparkContext.setLogLevel("ERROR")
+    return spark
+
+
+@st.cache_resource(show_spinner="Loading saved PySpark pipeline...")
+def load_pipeline(path: str):
+    from pyspark.ml import PipelineModel
+
+    return PipelineModel.load(path)
+
+
+@st.cache_data(show_spinner=False)
+def load_features() -> pd.DataFrame:
+    return pd.read_parquet(CUTOFF_PARQUET)
+
+
+@st.cache_data(show_spinner=False)
+def load_predictions() -> pd.DataFrame:
+    return pd.read_csv(PREDICTIONS)
+
+
+@st.cache_data(show_spinner=False)
+def load_results(path: Path) -> pd.DataFrame:
+    return pd.read_csv(path)
+
+
+# ---------------------------------------------------------------------------
+# Header and warning
+# ---------------------------------------------------------------------------
 
 st.title("📊 Customer Churn Prediction Dashboard")
-st.subheader("Model Evaluation and Visualisation")
+st.subheader("Model evaluation on held-out customers")
 
-st.write(
-    "This dashboard evaluates an existing trained "
-    "machine learning model using customer churn data."
+st.warning(
+    "**Read before using these numbers.** The original features covered each subscription's whole "
+    "window, which ends at cancellation for churned customers, so they leaked outcome information. "
+    "This dashboard uses the leakage-controlled features (events before start + 14 days). With those "
+    "features the models are close to chance, so **this is not a usable renewal predictor**. "
+    "Churn is `auto_renew = 0`, a proxy that has not been checked against cancellation records."
 )
 
-# ---------------------------------------
-# 2. SIDEBAR - FILE UPLOAD
-# ---------------------------------------
-
-st.sidebar.header("Upload Files")
-
-model_file = st.sidebar.file_uploader(
-    "Upload trained model (.pkl / .joblib)",
-    type=["pkl", "joblib"]
-)
-
-csv_file = st.sidebar.file_uploader(
-    "Upload customer churn dataset (.csv)",
-    type=["csv"]
-)
-
-# ---------------------------------------
-# 3. LOAD MODEL
-# ---------------------------------------
-
-def load_model(file):
-    try:
-        model = joblib.load(file)
-        return model
-    except Exception:
-        file.seek(0)
-        return pickle.load(file)
-
-
-# ---------------------------------------
-# 4. LOAD DATASET
-# ---------------------------------------
-
-if model_file is not None and csv_file is not None:
-
-    try:
-        model = load_model(model_file)
-        df = pd.read_csv(csv_file)
-
-        st.success("Model and dataset loaded successfully!")
-
-        # ---------------------------------------
-        # 5. DATASET INFORMATION
-        # ---------------------------------------
-
-        st.header("1. Dataset Overview")
-
-        col1, col2, col3 = st.columns(3)
-
-        with col1:
-            st.metric("Total Records", len(df))
-
-        with col2:
-            st.metric("Total Features", len(df.columns))
-
-        with col3:
-            st.metric(
-                "Missing Values",
-                int(df.isnull().sum().sum())
-            )
-
-        st.write("### Dataset Preview")
-        st.dataframe(df.head(10), use_container_width=True)
-
-        # ---------------------------------------
-        # 6. TARGET VARIABLE
-        # ---------------------------------------
-
-        st.header("2. Target Variable")
-
-        if "auto_renew" not in df.columns:
-            st.error("Target column 'auto_renew' not found.")
-            st.stop()
-
-        st.write("Auto-Renew Distribution")
-
-        fig, ax = plt.subplots(figsize=(7, 4))
-
-        sns.countplot(
-            data=df,
-            x="auto_renew",
-            ax=ax
-        )
-
-        ax.set_title("Customer Auto-Renew Distribution")
-        ax.set_xlabel("Auto Renew")
-        ax.set_ylabel("Number of Customers")
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-        # ---------------------------------------
-        # 7. PREPARE TEST DATA
-        # ---------------------------------------
-
-        st.header("3. Model Evaluation")
-
-        target_col = "auto_renew"
-
-        X = df.drop(
-            columns=[target_col, "customer_id"],
-            errors="ignore"
-        )
-
-        y = df[target_col]
-
-        # Convert categorical variables into numerical
-        X_encoded = pd.get_dummies(
-            X,
-            drop_first=True
-        )
-
-        # Align input features with trained model
-        expected_features = getattr(
-            model,
-            "feature_names_in_",
-            None
-        )
-
-        if expected_features is None and hasattr(model, "named_steps"):
-            expected_features = getattr(
-                model,
-                "feature_names_in_",
-                None
-            )
-
-        if expected_features is not None:
-
-            X_encoded = X_encoded.reindex(
-                columns=expected_features,
-                fill_value=0
-            )
-
-        elif hasattr(model, "n_features_in_"):
-
-            if X_encoded.shape[1] != model.n_features_in_:
-                st.error(
-                    "Feature count mismatch. "
-                    "The uploaded model does not match "
-                    "the dataset encoding."
-                )
-                st.stop()
-
-        else:
-            st.error(
-                "Cannot verify the model's expected input features. "
-                "Please check your saved model."
-            )
-            st.stop()
-
-        # ---------------------------------------
-        # 8. PREDICTIONS
-        # ---------------------------------------
-
-        y_pred = model.predict(X_encoded)
-
-        if len(np.unique(y)) != 2:
-            st.error("ROC-AUC requires a binary target variable.")
-            st.stop()
-
-        # ---------------------------------------
-        # 9. EVALUATION METRICS
-        # ---------------------------------------
-
-        accuracy = accuracy_score(y, y_pred)
-
-        precision = precision_score(
-            y, y_pred, zero_division=0
-        )
-
-        recall = recall_score(
-            y, y_pred, zero_division=0
-        )
-
-        f1 = f1_score(
-            y, y_pred, zero_division=0
-        )
-
-        y_prob = None
-
-        if hasattr(model, "predict_proba"):
-
-            probabilities = model.predict_proba(X_encoded)
-
-            classes = list(model.classes_)
-
-            if 1 in classes:
-                positive_index = classes.index(1)
-                y_prob = probabilities[:, positive_index]
-
-        elif hasattr(model, "decision_function"):
-
-            y_prob = model.decision_function(X_encoded)
-
-        if y_prob is not None:
-            roc_auc = roc_auc_score(y, y_prob)
-        else:
-            roc_auc = None
-
-        # ---------------------------------------
-        # 10. DISPLAY METRICS
-        # ---------------------------------------
-
-        st.subheader("Performance Metrics")
-
-        c1, c2, c3, c4, c5 = st.columns(5)
-
-        c1.metric("Accuracy", f"{accuracy:.4f}")
-        c2.metric("Precision", f"{precision:.4f}")
-        c3.metric("Recall", f"{recall:.4f}")
-        c4.metric("F1-Score", f"{f1:.4f}")
-
-        if roc_auc is not None:
-            c5.metric("ROC-AUC", f"{roc_auc:.4f}")
-        else:
-            c5.metric("ROC-AUC", "N/A")
-
-        # ---------------------------------------
-        # 11. CONFUSION MATRIX
-        # ---------------------------------------
-
-        st.header("4. Confusion Matrix")
-
-        cm = confusion_matrix(
-            y,
-            y_pred,
-            labels=[0, 1]
-        )
-
-        fig, ax = plt.subplots(figsize=(7, 5))
-
-        sns.heatmap(
-            cm,
-            annot=True,
-            fmt="d",
-            cmap="Blues",
-            xticklabels=["Churn (0)", "Renew (1)"],
-            yticklabels=["Churn (0)", "Renew (1)"],
-            ax=ax
-        )
-
-        ax.set_xlabel("Predicted Label")
-        ax.set_ylabel("Actual Label")
-        ax.set_title("Confusion Matrix")
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-        # ---------------------------------------
-        # 12. CLASSIFICATION REPORT
-        # ---------------------------------------
-
-        st.header("5. Classification Report")
-
-        report = classification_report(
-            y,
-            y_pred,
-            output_dict=True,
-            zero_division=0
-        )
-
-        report_df = pd.DataFrame(report).transpose()
-
-        st.dataframe(
-            report_df.round(4),
-            use_container_width=True
-        )
-
-        # ---------------------------------------
-        # 13. ROC CURVE
-        # ---------------------------------------
-
-        st.header("6. ROC Curve")
-
-        if y_prob is not None:
-
-            fpr, tpr, thresholds = roc_curve(y, y_prob)
-
-            fig, ax = plt.subplots(figsize=(7, 5))
-
-            ax.plot(
-                fpr,
-                tpr,
-                label=f"ROC-AUC = {roc_auc:.4f}"
-            )
-
-            ax.plot(
-                [0, 1],
-                [0, 1],
-                linestyle="--"
-            )
-
-            ax.set_xlabel("False Positive Rate")
-            ax.set_ylabel("True Positive Rate")
-            ax.set_title("Receiver Operating Characteristic")
-
-            ax.legend()
-
-            st.pyplot(fig)
-            plt.close(fig)
-
-        else:
-            st.info("ROC curve unavailable: model has no probability scores.")
-
-        # ---------------------------------------
-        # 14. METRICS VISUALISATION
-        # ---------------------------------------
-
-        st.header("7. Evaluation Metrics Visualisation")
-
-        metric_names = [
-            "Accuracy",
-            "Precision",
-            "Recall",
-            "F1-Score"
-        ]
-
-        metric_values = [
-            accuracy,
-            precision,
-            recall,
-            f1
-        ]
-
-        if roc_auc is not None:
-            metric_names.append("ROC-AUC")
-            metric_values.append(roc_auc)
-
-        fig, ax = plt.subplots(figsize=(10, 5))
-
-        bars = ax.bar(
-            metric_names,
-            metric_values
-        )
-
-        ax.set_ylim(0, 1.05)
-        ax.set_ylabel("Score")
-        ax.set_title("Model Performance")
-
-        ax.bar_label(
-            bars,
-            fmt="%.3f"
-        )
-
-        st.pyplot(fig)
-        plt.close(fig)
-
-        # ---------------------------------------
-        # 15. PREDICTION RESULTS
-        # ---------------------------------------
-
-        st.header("8. Prediction Results")
-
-        results = pd.DataFrame({
-            "Actual": y.reset_index(drop=True),
-            "Predicted": pd.Series(y_pred),
-            "Correct": (
-                y.reset_index(drop=True).to_numpy()
-                == y_pred
-            )
-        })
-
-        if y_prob is not None:
-            results["Renew Probability"] = y_prob
-
-        st.dataframe(
-            results.head(50),
-            use_container_width=True
-        )
-
-        csv_output = results.to_csv(index=False)
-
-        st.download_button(
-            "Download Evaluation Results",
-            data=csv_output,
-            file_name="customer_churn_evaluation.csv",
-            mime="text/csv"
-        )
-
-        st.success("Model evaluation completed successfully!")
-
-    except Exception as e:
-
-        st.error(f"Error: {str(e)}")
-
-else:
-
-    st.info(
-        "Please upload both your trained model.pkl "
-        "and customer_churn_dataset.csv files."
+if not (CUTOFF_PARQUET.exists() and PREDICTIONS.exists() and SELECTED.exists()):
+    st.error(
+        "Required outputs are missing. Run `PerfectPetClub/notebooks/03_Fixed_Cutoff_Features.ipynb` "
+        "and then `04_Cutoff_Machine_Learning.ipynb`."
     )
+    st.stop()
 
-    st.write("### Required Files")
-    st.write("- model.pkl")
-    st.write("- customer_churn_dataset.csv")
+selected = pd.read_csv(SELECTED).iloc[0]
+pipeline_path = PROJECT / selected["pipeline_path"]
+features = load_features()
+preds = load_predictions()
+
+# ---------------------------------------------------------------------------
+# 1. Dataset overview
+# ---------------------------------------------------------------------------
+
+st.header("1. Dataset overview")
+c1, c2, c3 = st.columns(3)
+c1.metric("Customers", len(features))
+c2.metric("Columns", len(features.columns))
+c3.metric("Missing values", int(features.isnull().sum().sum()))
+st.caption("Undefined rates (e.g. average order value with no orders) would be imputed inside the pipeline from training data only. This cutoff dataset has no such gaps.")
+
+with st.expander("Dataset preview"):
+    st.dataframe(features.head(10))
+
+# ---------------------------------------------------------------------------
+# 2. Target
+# ---------------------------------------------------------------------------
+
+st.header("2. Target variable")
+st.write("Churn = did not renew (`auto_renew = 0`). Renewed = `auto_renew = 1`.")
+fig, ax = plt.subplots(figsize=(7, 4))
+counts = features["auto_renew"].map({0: "Churned (auto_renew = 0)", 1: "Renewed (auto_renew = 1)"}).value_counts()
+sns.barplot(x=counts.index, y=counts.values, ax=ax)
+ax.set_title("Customers by outcome (auto_renew)")
+ax.set_ylabel("Customers")
+st.pyplot(fig)
+plt.close(fig)
+
+# ---------------------------------------------------------------------------
+# 3. Held-out evaluation with the saved PySpark pipeline
+# ---------------------------------------------------------------------------
+
+st.header("3. Model evaluation (held-out test customers)")
+st.write(
+    f"Model: **{selected['selected_config']} / {selected['selected_model']}**, the PySpark pipeline saved in "
+    f"`{selected['pipeline_path']}`. Metrics use only the 44 test customers that were never used for training."
+)
+
+# Re-score the test customers with the saved pipeline, so the dashboard shows the model rather than a cached file.
+test_ids = preds["customer_id"].tolist()
+try:
+    spark = get_spark()
+    model = load_pipeline(str(pipeline_path))
+    sdf = spark.createDataFrame(features[features["customer_id"].isin(test_ids)].assign(churn_label=lambda d: (1 - d["auto_renew"]).astype(float)))
+    scored = model.transform(sdf).select("customer_id", "churn_label", "prediction", "probability").toPandas()
+    scored["churn_probability"] = scored["probability"].apply(lambda v: float(v[1]))
+    scored = scored.drop(columns="probability")
+    live = True
+except Exception as exc:  # show the failure, do not hide it
+    st.error(f"Could not run the saved pipeline: {exc}")
+    scored = preds.rename(columns={"churn_label": "churn_label"})
+    live = False
+
+if live:
+    merged = scored.merge(preds[["customer_id", "prediction"]], on="customer_id", suffixes=("", "_saved"))
+    agree = int((merged["prediction"] == merged["prediction_saved"]).sum())
+    st.caption(f"Live re-scoring agrees with the saved notebook predictions for {agree} of {len(merged)} test customers.")
+
+y_true = scored["churn_label"].astype(int).to_numpy()
+y_pred = scored["prediction"].astype(int).to_numpy()
+y_prob = scored["churn_probability"].to_numpy()
+
+accuracy = accuracy_score(y_true, y_pred)
+precision = precision_score(y_true, y_pred, pos_label=CHURN, zero_division=0)
+recall = recall_score(y_true, y_pred, pos_label=CHURN, zero_division=0)
+f1 = f1_score(y_true, y_pred, pos_label=CHURN, zero_division=0)
+roc_auc = roc_auc_score(y_true, y_prob) if len(np.unique(y_true)) == 2 else float("nan")
+
+m1, m2, m3, m4, m5 = st.columns(5)
+m1.metric("Accuracy", f"{accuracy:.3f}")
+m2.metric("Churn precision", f"{precision:.3f}")
+m3.metric("Churn recall", f"{recall:.3f}")
+m4.metric("Churn F1", f"{f1:.3f}")
+m5.metric("ROC-AUC (churn)", f"{roc_auc:.3f}")
+st.caption("Churn is the positive class. With 44 test customers, one customer changes precision or recall by several points.")
+
+# ---------------------------------------------------------------------------
+# 4. Confusion matrix
+# ---------------------------------------------------------------------------
+
+st.header("4. Confusion matrix")
+cm = confusion_matrix(y_true, y_pred, labels=[RENEWED, CHURN])
+fig, ax = plt.subplots(figsize=(6, 4.5))
+sns.heatmap(cm, annot=True, fmt="d", cmap="Blues", cbar=False, ax=ax,
+            xticklabels=["Predicted renewed", "Predicted churned"],
+            yticklabels=["Actual renewed", "Actual churned"])
+ax.set_title("Held-out test customers")
+st.pyplot(fig)
+plt.close(fig)
+
+# ---------------------------------------------------------------------------
+# 5. Classification report
+# ---------------------------------------------------------------------------
+
+st.header("5. Classification report")
+report = classification_report(
+    y_true, y_pred, labels=[RENEWED, CHURN], target_names=[LABEL_NAMES[RENEWED], LABEL_NAMES[CHURN]],
+    output_dict=True, zero_division=0,
+)
+st.dataframe(pd.DataFrame(report).transpose().round(3))
+
+# ---------------------------------------------------------------------------
+# 6. ROC curve
+# ---------------------------------------------------------------------------
+
+st.header("6. ROC curve (churn)")
+if len(np.unique(y_true)) == 2:
+    fpr, tpr, _ = roc_curve(y_true, y_prob, pos_label=CHURN)
+    fig, ax = plt.subplots(figsize=(6, 4.5))
+    ax.plot(fpr, tpr, label=f"ROC-AUC = {roc_auc:.3f}")
+    ax.plot([0, 1], [0, 1], linestyle="--", color="grey")
+    ax.set_xlabel("False positive rate")
+    ax.set_ylabel("True positive rate (churn recall)")
+    ax.legend()
+    st.pyplot(fig)
+    plt.close(fig)
+
+# ---------------------------------------------------------------------------
+# 7. Model comparison
+# ---------------------------------------------------------------------------
+
+st.header("7. Model comparison")
+cut_results = load_results(OUTPUT_CUTOFF / "model_results.csv")
+st.subheader("Fixed-cutoff features (use these)")
+st.dataframe(cut_results[["config", "model", "cv_roc_auc", "roc_auc", "churn_precision", "churn_recall", "churn_f1", "accuracy"]].round(3))
+
+fig, ax = plt.subplots(figsize=(10, 4.5))
+x = np.arange(len(cut_results))
+ax.bar(x - 0.2, cut_results["cv_roc_auc"], width=0.4, label="CV ROC-AUC")
+ax.bar(x + 0.2, cut_results["roc_auc"], width=0.4, label="Test ROC-AUC")
+ax.axhline(0.5, linestyle="--", color="grey", label="Chance (0.5)")
+ax.set_xticks(x)
+ax.set_xticklabels(cut_results["config"] + "\n" + cut_results["model"], fontsize=8)
+ax.set_ylim(0, 1)
+ax.set_ylabel("ROC-AUC")
+ax.legend(fontsize=8)
+st.pyplot(fig)
+plt.close(fig)
+
+with st.expander("Original full-window results (leaky, for comparison only)"):
+    st.warning("These used features that cover activity up to cancellation. Do not use them to judge renewal prediction.")
+    canon_results = load_results(OUTPUT_CANON / "model_results.csv")
+    st.dataframe(canon_results[["config", "model", "cv_roc_auc", "roc_auc", "churn_f1"]].round(3))
+
+# ---------------------------------------------------------------------------
+# 8. Prediction results
+# ---------------------------------------------------------------------------
+
+st.header("8. Test-customer predictions")
+results = pd.DataFrame({
+    "customer_id": scored["customer_id"].to_numpy(),
+    "Actual": pd.Series(y_true).map(LABEL_NAMES).to_numpy(),
+    "Predicted": pd.Series(y_pred).map(LABEL_NAMES).to_numpy(),
+    "Correct": y_true == y_pred,
+    "Churn probability": y_prob.round(4),
+})
+st.dataframe(results.sort_values("Churn probability", ascending=False), height=320)
+st.download_button(
+    "Download test predictions (CSV)",
+    data=results.to_csv(index=False),
+    file_name="test_predictions_cutoff14.csv",
+    mime="text/csv",
+)
