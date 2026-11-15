@@ -1,0 +1,2 @@
+selected_config,selected_model,pipeline_path
+A_cutoff_operational,GBTClassifier,models/cutoff21/best_pipeline_A_cutoff_operational_GBTClassifier
