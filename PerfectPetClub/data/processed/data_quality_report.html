@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PerfectPetClub ETL Data Quality & Transformation Report</title>
+<style>
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; line-height: 1.6; max-width: 960px; margin: 40px auto; padding: 0 20px; color: #24292e; background-color: #ffffff; }
+h1, h2, h3 { color: #1a202c; border-bottom: 1px solid #eaecef; padding-bottom: 0.3em; }
+table { border-collapse: collapse; width: 100%; margin: 20px 0; }
+th, td { border: 1px solid #dfe2e5; padding: 10px 14px; text-align: left; }
+th { background-color: #f6f8fa; font-weight: 600; }
+tr:nth-child(even) { background-color: #fcfcfc; }
+code { background-color: #f3f4f6; padding: 0.2em 0.4em; border-radius: 3px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size: 85%; }
+pre { background-color: #f6f8fa; padding: 16px; border-radius: 6px; overflow: auto; }
+blockquote { border-left: 4px solid #0366d6; color: #586069; padding: 0 16px; margin: 0; }
+hr { height: 1px; background-color: #e1e4e8; border: none; margin: 24px 0; }
+.badge { display: inline-block; padding: 4px 8px; border-radius: 4px; font-weight: bold; background: #e1f5fe; color: #0277bd; }
+</style>
+</head>
+<body>
+<h1 id="perfectpetclub-etl-data-quality-transformation-report">PerfectPetClub ETL Data Quality &amp; Transformation Report</h1>
+<p><strong>Project:</strong> PerfectPetClub Data Engineering Pipeline<br />
+<strong>Module:</strong> 7COM2005 Data Engineering Team Project (University of Hertfordshire)<br />
+<strong>Date:</strong> 2026-11-13<br />
+<strong>Target Dataset:</strong> <code>PerfectPetClub/data/processed/customer_churn_dataset.parquet</code><br />
+<strong>Dimensions:</strong> Exactly 221 unique customer rows × 36 engineered features<br />
+<strong>Execution Status:</strong> Verified reproducible end-to-end execution (0 errors, 0 missing values, 0 duplicate IDs)  </p>
+<hr />
+<h2 id="1-executive-summary-source-inventory">1. Executive Summary &amp; Source Inventory</h2>
+<p>The ETL pipeline ingests all five required raw datasets from heterogeneous operational and analytical systems into a unified, clean, privacy-preserving customer-level analytical feature store.</p>
+<table>
+<thead>
+<tr>
+<th>Source System</th>
+<th>File / Entity</th>
+<th>Ingestion Mode</th>
+<th>Records Ingested</th>
+<th>Join Key to Customer</th>
+<th>Role in Output Dataset</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><strong>SQLite Database</strong></td>
+<td><code>customer</code></td>
+<td>Read-only SQL</td>
+<td>221</td>
+<td><code>id</code> (PK)</td>
+<td>Base entity spine (<code>customer_id</code>)</td>
+</tr>
+<tr>
+<td><strong>SQLite Database</strong></td>
+<td><code>subscription</code> + <code>subscription_type</code></td>
+<td>Read-only SQL</td>
+<td>221</td>
+<td><code>subscription_id</code></td>
+<td>Churn target (<code>auto_renew</code>), plan tier, tenure</td>
+</tr>
+<tr>
+<td><strong>SQLite Database</strong></td>
+<td><code>sale</code> + <code>payment</code></td>
+<td>Read-only SQL</td>
+<td>23,188</td>
+<td><code>customer_id</code></td>
+<td>Order volume, monetary spend, delivery delay metrics</td>
+</tr>
+<tr>
+<td><strong>SQLite Database</strong></td>
+<td><code>sale_product</code> + <code>product</code></td>
+<td>Read-only SQL</td>
+<td>59,759</td>
+<td><code>sale_id</code> → <code>customer_id</code></td>
+<td>Quantity of items, unique products purchased</td>
+</tr>
+<tr>
+<td><strong>SQLite Database</strong></td>
+<td><code>product_review</code></td>
+<td>Read-only SQL</td>
+<td>10,990</td>
+<td><code>customer_id</code></td>
+<td>Review volume, polarity, satisfaction proxy</td>
+</tr>
+<tr>
+<td><strong>CRM System</strong></td>
+<td><code>PerfectPetClub_CRM_report.csv</code></td>
+<td>Chunked CSV read</td>
+<td>7,585</td>
+<td><code>customer_id</code></td>
+<td>Customer service tickets, complaints, channels</td>
+</tr>
+<tr>
+<td><strong>Web Server Logs</strong></td>
+<td><code>PerfectPetClub_server_log.csv</code></td>
+<td>Chunked CSV read</td>
+<td>67,249</td>
+<td><code>login</code> → <code>customer.email</code></td>
+<td>Total sessions, browsing recency</td>
+</tr>
+<tr>
+<td><strong>Customer Survey</strong></td>
+<td><code>PerfectPetClub_survey.csv</code></td>
+<td>Read-only CSV / S3</td>
+<td>221</td>
+<td><code>email</code> → <code>customer.email</code></td>
+<td>Customer sentiment, NPS, income bracket, price sensitivity</td>
+</tr>
+</tbody>
+</table>
+<p>All source files were verified for read-only integrity with SHA-256 cryptographic hashes before and after processing.</p>
+<hr />
+<h2 id="2-credential-security-ingestion-architecture">2. Credential Security &amp; Ingestion Architecture</h2>
+<p>In accordance with enterprise data engineering standards and university information security policies:</p>
+<ol>
+<li><strong>Zero Hardcoded Secrets</strong>:</li>
+<li>Access keys, secret keys, and internal endpoints are loaded dynamically at runtime via <code>python-dotenv</code> and system environment variables (<code>UH_S3_ACCESS_KEY</code>, <code>UH_S3_SECRET_KEY</code>, <code>UH_S3_ENDPOINT_URL</code>, <code>UH_S3_BUCKET_NAME</code>).</li>
+<li><strong>Git Exclusion Verification</strong>:</li>
+<li>The <code>.env</code> file containing live credentials is explicitly matched and excluded by <code>.gitignore</code> (line 226: <code>*.env</code>).</li>
+<li>A sanitized template, <code>.env.example</code>, is tracked in the repository root to document required environment variables without leaking credentials.</li>
+<li><strong>Repository History Audit</strong>:</li>
+<li>Full Git commit history was audited (<code>git log -S</code>, <code>git grep</code>, <code>git log -p</code>), confirming zero credentials have ever been committed or staged.</li>
+<li><strong>Resilient S3 Automated Downloader</strong>:</li>
+<li><code>PerfectPetClub/scripts/download_survey_from_s3.py</code> implements secure parameterization, socket timeouts (5s connect, 15s read), and descriptive network diagnostics for UH VPN requirements.</li>
+</ol>
+<hr />
+<h2 id="3-data-cleaning-transformation-decisions">3. Data Cleaning &amp; Transformation Decisions</h2>
+<ol>
+<li><strong>Survey Validation &amp; PII Elimination</strong>:</li>
+<li>All 5 survey columns (<code>email</code>, <code>reported_income</code>, <code>nps_recommend</code>, <code>satisfaction_score</code>, <code>online_comparison_freq</code>) were validated.</li>
+<li>All 221 respondents matched 1-to-1 with the customer database.</li>
+<li>Numeric survey scores were validated to strictly adhere to the <code>[0, 10]</code> scale.</li>
+<li><strong>PII Protection</strong>: The raw <code>email</code> field was discarded immediately after mapping to <code>customer_id</code>, preventing personal data leakage into the analytical modeling dataset.</li>
+<li><strong>CRM Header Typo Correction</strong>:</li>
+<li>The misspelled column <code>recieved_datatime</code> was renamed in-memory to <code>received_datetime</code>. The raw source CSV was left completely unmodified.</li>
+<li><strong>Platform String Normalization</strong>:</li>
+<li>Platform values stored as Python string-encoded lists (e.g. <code>"['e-mail']"</code>) were cleaned into standardized categories (<code>"e-mail"</code>, <code>"telephone"</code>, <code>"live-chat"</code>).</li>
+<li><strong>Delivery Status Discrimination</strong>:</li>
+<li>Sales records were partitioned into completed orders (<code>delivered_date.notna()</code>) and unfulfilled orders (<code>delivered_date.isna()</code>).</li>
+<li>Delivery delay in hours was strictly computed for completed deliveries where <code>delivered_date &gt; expected_date</code>.</li>
+<li><strong>Memory-Efficient Server Log Ingestion</strong>:</li>
+<li>The 67,249-row server log CSV (~12 MB) was processed in streaming chunks of 20,000 rows.</li>
+<li>Logins were translated immediately to integer customer IDs; IP addresses and raw user-agent strings were dropped to prevent memory overhead and sensitive data exposure.</li>
+</ol>
+<hr />
+<h2 id="4-missing-value-treatment-imputation-audit">4. Missing-Value Treatment &amp; Imputation Audit</h2>
+<ul>
+<li><strong>Survey Features (0 missing)</strong>: Exactly 221 out of 221 customers completed the popup survey (100% complete).</li>
+<li><strong>CRM Interactions (21 customers with 0 support tickets)</strong>:</li>
+<li>Ticket and channel interaction counts imputed with <code>0</code>.</li>
+<li><code>crm_complaint_ratio</code> safely imputed with <code>0.0</code> using a zero-division guard.</li>
+<li><strong>Product Reviews (8 customers with 0 reviews)</strong>:</li>
+<li>Review counts imputed with <code>0</code>.</li>
+<li>Binary indicator <code>has_reviews</code> set to <code>0.0</code>.</li>
+<li><code>avg_star_rating</code> set to neutral median value <code>3.0</code> to preserve mathematical scaling without biasing sentiment upwards or downwards.</li>
+<li><strong>Final Completeness</strong>: Exactly <strong>0 missing values</strong> across all 36 columns.</li>
+</ul>
+<hr />
+<h2 id="5-financial-reconciliation-aggregation-audit">5. Financial Reconciliation &amp; Aggregation Audit</h2>
+<p>A comprehensive mathematical audit reconciled all aggregated features against primary operational records:</p>
+<ol>
+<li><strong>Total Spend Reconciliation</strong>:</li>
+<li>Sum of customer <code>total_spend_pence</code> in final dataset: <strong>£1,058,642.73</strong> (105,864,273 pence).</li>
+<li>Sum of <code>amount</code> in SQLite <code>payment</code> table: <strong>£1,058,642.73</strong> (105,864,273 pence).</li>
+<li>Discrepancy: <strong>£0.00 (100% exact match)</strong> across all 221 subscribers.</li>
+<li><strong>Order Volume Reconciliation</strong>:</li>
+<li>Customer-by-customer order counts match the SQLite <code>sale</code> table with 0 discrepancy (23,188 total transactions).</li>
+<li><strong>CRM Support Interaction Reconciliation</strong>:</li>
+<li>Sum of customer <code>total_crm_interactions</code> matches the raw CSV row count exactly: <strong>7,585 records (0 discrepancy)</strong>.</li>
+<li><strong>Delivery Performance Reconciliation</strong>:</li>
+<li>Completed deliveries sum to <strong>22,098</strong> and unfulfilled orders sum to <strong>1,090</strong> across all 221 customers, exactly matching the 23,188 rows in the SQLite <code>sale</code> table.</li>
+</ol>
+<hr />
+<h2 id="6-final-feature-catalog-36-attributes">6. Final Feature Catalog (36 Attributes)</h2>
+<h3 id="group-1-base-subscription-demographics-5-features">Group 1: Base &amp; Subscription Demographics (5 features)</h3>
+<ul>
+<li><code>customer_id</code> (int64) - Unique subscriber identifier (primary key)</li>
+<li><code>subscription_tier</code> (str) - Subscription plan level (<code>Basic</code>, <code>SuperSaver</code>, <code>Premium</code>)</li>
+<li><code>delivery_service</code> (str) - Primary courier provider (<code>Royal Mail</code>, <code>Evri</code>, <code>DPD</code>)</li>
+<li><code>duration_days</code> (int64) - Active subscription duration in days</li>
+<li><code>auto_renew</code> (int64) - <strong>Supervised Target Variable</strong> (1 = Renewed, 0 = Churned)</li>
+</ul>
+<h3 id="group-2-purchasing-behaviour-6-features">Group 2: Purchasing Behaviour (6 features)</h3>
+<ul>
+<li><code>total_orders</code> (int64) - Cumulative orders placed</li>
+<li><code>total_spend_pence</code> (int64) - Cumulative spend in pence</li>
+<li><code>avg_order_value_pence</code> (float64) - Mean transaction value</li>
+<li><code>total_items_purchased</code> (int64) - Total unit volume purchased</li>
+<li><code>unique_products_purchased</code> (int64) - Diversity of catalog items purchased</li>
+<li><code>avg_items_per_order</code> (float64) - Mean items per order</li>
+</ul>
+<h3 id="group-3-delivery-performance-5-features">Group 3: Delivery Performance (5 features)</h3>
+<ul>
+<li><code>completed_deliveries</code> (int64) - Count of successfully delivered orders</li>
+<li><code>unfulfilled_orders</code> (int64) - Count of unfulfilled or pending deliveries</li>
+<li><code>delayed_deliveries</code> (int64) - Orders delivered after expected delivery date</li>
+<li><code>avg_delivery_delay_hours</code> (float64) - Mean delivery delay duration</li>
+<li><code>delivery_delay_ratio</code> (float64) - Delayed deliveries divided by completed deliveries</li>
+</ul>
+<h3 id="group-4-customer-support-crm-7-features">Group 4: Customer Support / CRM (7 features)</h3>
+<ul>
+<li><code>total_crm_interactions</code> (float64) - Total customer support tickets</li>
+<li><code>crm_complaints_count</code> (float64) - Support tickets classified as complaints</li>
+<li><code>crm_queries_count</code> (float64) - Support tickets classified as inquiries</li>
+<li><code>crm_email_count</code> (float64) - Support contacts via email channel</li>
+<li><code>crm_phone_count</code> (float64) - Support contacts via telephone channel</li>
+<li><code>crm_livechat_count</code> (float64) - Support contacts via live-chat channel</li>
+<li><code>crm_complaint_ratio</code> (float64) - Proportion of support contacts that were complaints</li>
+</ul>
+<h3 id="group-5-product-reviews-5-features">Group 5: Product Reviews (5 features)</h3>
+<ul>
+<li><code>total_reviews</code> (float64) - Product reviews written by subscriber</li>
+<li><code>avg_star_rating</code> (float64) - Mean review score (1–5 scale, neutral 3.0 if no reviews)</li>
+<li><code>low_star_reviews_count</code> (float64) - Unfavorable reviews (&lt;= 2 stars)</li>
+<li><code>high_star_reviews_count</code> (float64) - Favorable reviews (&gt;= 4 stars)</li>
+<li><code>has_reviews</code> (float64) - Binary indicator (1.0 = has submitted reviews, 0.0 = none)</li>
+</ul>
+<h3 id="group-6-web-engagement-4-features">Group 6: Web Engagement (4 features)</h3>
+<ul>
+<li><code>total_web_sessions</code> (int64) - Total logged website sessions</li>
+<li><code>days_since_last_session</code> (float64) - Recency of latest web visit before renewal point</li>
+<li><code>session_frequency_per_month</code> (float64) - Normalized web engagement velocity</li>
+<li><code>order_frequency_per_month</code> (float64) - Normalized order placement velocity</li>
+</ul>
+<h3 id="group-7-customer-survey-sentiment-4-features">Group 7: Customer Survey &amp; Sentiment (4 features)</h3>
+<ul>
+<li><code>reported_income</code> (str) - Self-reported household income bracket (e.g. <code>34k-38k</code>)</li>
+<li><code>nps_recommend</code> (int64) - Net Promoter Score willingness to recommend (scale 0–10)</li>
+<li><code>satisfaction_score</code> (int64) - Overall customer satisfaction score (scale 0–10)</li>
+<li><code>online_comparison_freq</code> (int64) - Frequency of competitor price comparison (scale 0–10)</li>
+</ul>
+<hr />
+<h2 id="7-target-variable-distribution">7. Target Variable Distribution</h2>
+<p>The target variable is <code>subscription.auto_renew</code>:
+* <strong>Renewed (<code>1</code>)</strong>: 135 customers (<strong>61.09%</strong>)
+* <strong>Churned (<code>0</code>)</strong>: 86 customers (<strong>38.91%</strong>)
+* <strong>Class Imbalance Ratio</strong>: Approximately 1.57:1 (mild imbalance, suitable for stratified cross-validation).</p>
+<hr />
+<h2 id="8-temporal-leakage-limitations-dual-model-evaluation-strategy">8. Temporal Leakage Limitations &amp; Dual-Model Evaluation Strategy</h2>
+<h3 id="critical-risk-lack-of-survey-timestamps">Critical Risk: Lack of Survey Timestamps</h3>
+<ol>
+<li><strong>Unverifiable Collection Point</strong>:</li>
+<li><code>PerfectPetClub_survey.csv</code> contains customer responses without a timestamp or date-of-completion attribute.</li>
+<li>Although documented as a "WebApp Popup Survey", it cannot be established whether responses occurred early during the subscription, midway through, or as an exit survey immediately prior to or following non-renewal.</li>
+<li><strong>Potential for Data Leakage</strong>:</li>
+<li>If low satisfaction or low NPS scores were recorded at the moment of cancellation, using these features to predict churn constitutes temporal target leakage (predicting an outcome using data generated as a consequence of the outcome).</li>
+<li>Conversely, high satisfaction scores might simply reflect active, happy subscribers responding during renewal.</li>
+</ol>
+<h3 id="methodological-solution-dual-model-benchmarking">Methodological Solution: Dual-Model Benchmarking</h3>
+<p>To critically evaluate this phenomenon in Section 4 (Machine Learning), models must be trained and compared under two distinct configurations:</p>
+<ul>
+<li><strong>Configuration A — Operational Baseline (31 features + target)</strong>:</li>
+<li>Uses strictly transactional, operational, CRM, delivery, and web log features.</li>
+<li>All operational features have verifiable temporal boundaries (100% occurring between <code>start_date</code> and <code>end_date</code>).</li>
+<li><strong>Configuration B — Multimodal Full Feature Set (35 features + target)</strong>:</li>
+<li>Ingests all operational features plus the 4 survey attributes (<code>reported_income</code>, <code>nps_recommend</code>, <code>satisfaction_score</code>, <code>online_comparison_freq</code>).</li>
+<li>Evaluates feature importance and performance gain (ROC-AUC / F1) against Configuration A to isolate and quantify the survey's incremental contribution and potential leakage footprint.</li>
+</ul>
+<p>Neither configuration should be prematurely claimed to be "leakage-free" without empirical verification and ablation analysis.</p>
+<hr />
+<h2 id="9-final-execution-verification">9. Final Execution Verification</h2>
+<ul>
+<li><strong>Notebook</strong>: <code>PerfectPetClub/notebooks/01_ETL_Pipeline.ipynb</code></li>
+<li><strong>Python Runtime</strong>: 3.14.2 (<code>.venv</code>)</li>
+<li><strong>Execution Result</strong>: All 24 cells executed sequentially with <strong>0 errors</strong>.</li>
+<li><strong>Output Format</strong>: Parquet with Snappy compression (<code>customer_churn_dataset.parquet</code>).</li>
+<li><strong>Parquet Roundtrip Verification</strong>: Completed and confirmed identical to in-memory DataFrame.</li>
+</ul>
+</body>
+</html>
