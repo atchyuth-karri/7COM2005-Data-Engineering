@@ -39,8 +39,33 @@ st.markdown(
 
 BASE_DIR = Path(__file__).resolve().parent
 
-DATA_PATH = BASE_DIR / "customer_churn_dataset(1).csv"
-MODEL_PATH = BASE_DIR / "gradient_boosting_model (1).pkl"
+def get_data_path():
+    candidates = [
+        BASE_DIR / "customer_churn_dataset.csv",
+        BASE_DIR / "gata" / "customer_churn_dataset.csv",
+        BASE_DIR / "ML_Notebook" / "customer_churn_dataset.csv",
+        BASE_DIR / "customer_churn_dataset(1).csv",
+        BASE_DIR / "PerfectPetClub" / "data" / "processed" / "customer_churn_dataset.csv",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return BASE_DIR / "customer_churn_dataset.csv"
+
+def get_model_path():
+    candidates = [
+        BASE_DIR / "gradient_boosting_model.pkl",
+        BASE_DIR / "gradient_boosting_model (1).pkl",
+        BASE_DIR / "gata" / "final_churn_model.pkl",
+        BASE_DIR / "Updated_ML_Models" / "gradient_boosting_model.pkl",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    return BASE_DIR / "gradient_boosting_model.pkl"
+
+DATA_PATH = get_data_path()
+MODEL_PATH = get_model_path()
 
 # ==========================================================
 # LOAD DATASET AND MODEL
@@ -48,13 +73,20 @@ MODEL_PATH = BASE_DIR / "gradient_boosting_model (1).pkl"
 
 @st.cache_data
 def load_dataset():
+    if not DATA_PATH.exists():
+        raise FileNotFoundError(f"Dataset not found at {DATA_PATH}")
     return pd.read_csv(DATA_PATH)
 
 
 @st.cache_resource
 def load_model():
+    if not MODEL_PATH.exists():
+        raise FileNotFoundError(f"Model file not found at {MODEL_PATH}")
     return joblib.load(MODEL_PATH)
 
+
+df = None
+model = None
 
 try:
     df = load_dataset()
@@ -65,7 +97,7 @@ except Exception as e:
     st.stop()
 
 
-if "auto_renew" not in df.columns:
+if df is None or "auto_renew" not in df.columns:
     st.error("The dataset must contain an auto_renew target column.")
     st.stop()
 
