@@ -30,7 +30,7 @@
 | **Lukshan** | Team Member | Exploratory data analysis, Scikit-learn comparative modeling, and feature exploration |
 | **Koteswarao** | Team Member | Application deployment, dashboard prototyping, and delivery packaging |
 | **Deekshitha** | Team Member | Data quality validation, CRM log processing, and documentation |
-| **Srinivas** | Team Member | Web server log processing, schema mapping, and testing |
+| **Vasu Challa** | Team Member | Web server log processing, schema mapping, and testing |
 
 ---
 
