@@ -24,7 +24,7 @@ PerfectPetClub/
 │
 ├── data/
 │   ├── raw/                                           <- Read-only original source datasets (SHA-256 verified)
-│   │   ├── PerfectPetClub.db                          <- SQLite transactional database (8 tables)
+│   │   ├── PerfectPetClub.db                          <- SQLite transactional database (9 tables)
 │   │   ├── PerfectPetClub_CRM_report.csv              <- CRM support logs (7,585 records)
 │   │   ├── PerfectPetClub_server_log.csv              <- Web server access logs (67,249 records)
 │   │   └── PerfectPetClub_survey.csv                  <- Survey responses (221 rows, S3 ingested)
@@ -72,7 +72,7 @@ PerfectPetClub/
 The raw datasets in `data/raw/` are immutable and cryptographically audited:
 
 1. **`PerfectPetClub.db` (SQLite)**:
-   - Relational operational database with 8 tables: `customer`, `subscription`, `subscription_type`, `sale`, `payment`, `sale_product`, `product`, and `product_review`. Totaling 94,158 records.
+   - Relational operational database with 9 tables: `customer`, `subscription`, `subscription_type`, `sale`, `payment`, `sale_product`, `product`, `product_category` and `product_review`. Totaling 117,790 rows.
 2. **`PerfectPetClub_CRM_report.csv`**:
    - Customer support ticket logs capturing queries, channels (`e-mail`, `live-chat`, `telephone`), and issue types.
 3. **`PerfectPetClub_server_log.csv`**:
