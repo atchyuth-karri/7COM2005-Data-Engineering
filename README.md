@@ -25,11 +25,11 @@
 
 | Name | Role | Responsibilities |
 |---|---|---|
-| **Divya** | Team Leader | Project coordination, task delegation, requirements tracking, and milestone reviews |
-| **Atchyuth Karri** | Team Member | Pipeline architecture, S3 ingestion, PySpark MLlib modeling, temporal leakage auditing, and Streamlit engineering |
-| **Lukshan** | Team Member | Exploratory data analysis, Scikit-learn comparative modeling, and feature exploration |
+| **Divya** | Team Leader | Project coordination, task delegation, requirements tracking, and milestone reviews , ETL building |
+| **Atchyuth Karri** | Team Member | Pipeline architecture,Github and version control, ETL execution and transformation , temporal leakage auditing|
+| **Lukshan** | Team Member | Scikit-learn comparative modeling, and feature exploration |
 | **Koteswarao** | Team Member | Application deployment, dashboard prototyping, and delivery packaging |
-| **Deekshitha** | Team Member | Data quality validation, CRM log processing, and documentation |
+| **Deekshitha** | Team Member |Data visualization|
 | **Vasu Challa** | Team Member | Web server log processing, schema mapping, and testing |
 
 ---
